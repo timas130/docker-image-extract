@@ -181,66 +181,27 @@ fetch() {
     fi
 }
 
-# https://docs.docker.com/docker-hub/api/latest/#tag/repositories
-manifest_list_url="https://hub.docker.com/v2/repositories/${image}/tags/${ref}"
+# https://docs.docker.com/registry/spec/auth/token/#how-to-authenticate
+api_token_url="https://ghcr.io/token?service=registry.docker.io&scope=repository:$image:pull"
+
+echo "Getting API token..."
+token=$(fetch "${api_token_url}" | extract 'token')
+auth_header="Authorization: Bearer $token"
+echo $token
 
 # If the ref is already a SHA-256 image digest, then we don't need to look up anything.
 if [ -z "${ref##sha256:*}" ]; then
     digest="${ref}"
 else
-    echo "Getting multi-arch manifest list..."
-    NL='
-'
-    digest=$(fetch "${manifest_list_url}" |
-        # Break up the single-line JSON output into separate lines by adding
-        # newlines before and after the chars '[', ']', '{', and '}'.
-        # This uses the \${NL} syntax because some BSD variants of sed don't
-        # support \n syntax in the replacement string, but instead require
-        # a literal newline preceded by a backslash.
-        sed -e 's/\([][{}]\)/\'"${NL}"'\1\'"${NL}"'/g' |
-        # Extract the "images":[...] list.
-        sed -n '/"images":/,/]/ p' |
-        # Each image's details are now on a separate line, e.g.
-        # "architecture":"arm64","features":"","variant":"v8","digest":"sha256:054c85801c4cb41511b176eb0bf13a2c4bbd41611ddd70594ec3315e88813524","os":"linux","os_features":"","os_version":null,"size":828724,"status":"active","last_pulled":"2022-09-02T22:46:48.240632Z","last_pushed":"2022-09-02T00:42:45.69226Z"
-        # The image details are interspersed with lines of stray punctuation,
-        # so grep for an arbitrary string that must be in these lines.
-        grep architecture |
-        # Search for an image that matches the platform.
-        while read -r image; do
-            # Arch is probably most likely to be unique, so check that first.
-            arch="$(echo ${image} | extract 'architecture')"
-            if [ "${arch}" != "${ARCH}" ]; then continue; fi
-
-            os="$(echo ${image} | extract 'os')"
-            if [ "${os}" != "${OS}" ]; then continue; fi
-
-            variant="$(echo ${image} | extract 'variant')"
-            if [ "${variant}" = "${VARIANT}" ]; then
-                echo ${image} | extract 'digest'
-                break
-            fi
-        done)
-
-    if [ -n "${digest}" ]; then
-        echo "Platform ${PLATFORM} resolved to '${digest}'..."
-    else
-        echo "No image digest found. Verify that the image, ref, and platform are valid."
-        exit 1
-    fi
+    echo "Tags not supported, I couldn't figure it out. Please use a SHA256 digest"
+    exit 1
 fi
 
-# https://docs.docker.com/registry/spec/auth/token/#how-to-authenticate
-api_token_url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:$image:pull"
-
 # https://github.com/docker/distribution/blob/master/docs/spec/api.md#pulling-an-image-manifest
-manifest_url="https://registry-1.docker.io/v2/${image}/manifests/${digest}"
+manifest_url="https://ghcr.io/v2/${image}/manifests/${digest}"
 
 # https://github.com/docker/distribution/blob/master/docs/spec/api.md#pulling-a-layer
-blobs_base_url="https://registry-1.docker.io/v2/${image}/blobs"
-
-echo "Getting API token..."
-token=$(fetch "${api_token_url}" | extract 'token')
-auth_header="Authorization: Bearer $token"
+blobs_base_url="https://ghcr.io/v2/${image}/blobs"
 
 # https://github.com/distribution/distribution/blob/main/docs/spec/manifest-v2-2.md
 docker_manifest_v2="application/vnd.docker.distribution.manifest.v2+json"
